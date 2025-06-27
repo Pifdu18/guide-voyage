@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Crée ton Guide de Voyage</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: linear-gradient(145deg, #f8fbff, #eaf3ff);
+      color: #111827;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      text-align: center;
+      padding: 1rem 1rem 0.5rem;
+      animation: fadeInDown 1s ease-out;
+    }
+    
+    .logo {
+      display: block;
+      margin: 0 auto 0.3rem;
+      height: 200px;        /* fixe la hauteur visible */
+      width: auto;
+      object-fit: contain;
+    }
+
+    header h1 {
+      font-size: 3rem;
+      font-weight: 700;
+      color: #1a73e8;
+      margin-bottom: 0.5rem;
+    }
+
+    header p {
+      font-size: 1.25rem;
+      color: #4b5563;
+      margin-bottom: 2rem;
+    }
+
+    .cta-button {
+      background: #1a73e8;
+      color: white;
+      padding: 1rem 2rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1.1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.3s ease, transform 0.2s ease;
+      box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3);
+    }
+
+    .cta-button:hover {
+      background: #155ab6;
+      transform: translateY(-2px);
+    }
+
+    .iframe-wrapper {
+  margin: 2rem auto;
+  /* max-width: 960px; */ /* ← supprime ou augmente */
+  padding: 0 1rem;
+  animation: fadeIn 1.2s ease-out;
+  width: 100%; /* ajouter */
+  max-width: 1100px; /* ajouter */
+  }
+
+  iframe {
+  width: 100vw; /* ou 100% */
+  max-width: 100%;
+  height: 700px;
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+  }
+
+    footer {
+      text-align: center;
+      font-size: 0.9rem;
+      color: #9ca3af;
+      margin: 2rem 0;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeInDown {
+      from { opacity: 0; transform: translateY(-30px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <img src="https://cdn.glitch.global/dfeee56f-79ee-4c17-93bd-3bfc3dd74ad8/ESCAPLAN.svg?v=1750970151225" alt="Logo" class="logo" />
+    <h1>Crée ton Guide de Voyage</h1>
+    <p>Génère un itinéraire personnalisé avec ton assistant intelligent</p>
+    <button class="cta-button" onclick="document.getElementById('bot').scrollIntoView({ behavior: 'smooth' });">
+      Commencer
+    </button>
+  </header>
+
+  <div class="iframe-wrapper" id="bot">
+    <iframe
+  src="https://typebot.co/open-ai-assistant-chat-c4hk4nt"
+  style="border: none; width: 100%; height: 600px"
+  ></iframe>
+  </div>
+
+  <footer>
+    Fait avec ❤️ par ESCAPLAN — 2025
+  </footer>
+
+</body>
+</html>
