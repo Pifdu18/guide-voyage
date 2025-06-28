@@ -1,23 +1,16 @@
 const express = require("express");
 const bodyParser = require("body-parser");
-const low = require("lowdb");
-const FileSync = require("lowdb/adapters/FileSync");
 const axios = require("axios");
 const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 
 const app = express();
 app.use(bodyParser.text({ type: "*/*" }));
 
-// Base de données LowDB
-const adapter = new FileSync("db.json");
-const db = low(adapter);
+// 🔐 Connexion à Supabase
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
 
-// Initialisation des données
-if (!db.has("guides").value()) {
-  db.set("guides", {}).write();
-}
-
-// 🔧 Fonction pour obtenir une image depuis l'API Unsplash
+// 🔧 Fonction pour obtenir une image depuis Unsplash
 async function getImageForCity(city) {
   try {
     const response = await axios.get("https://source.unsplash.com/800x400/?" + encodeURIComponent(city));
@@ -28,16 +21,17 @@ async function getImageForCity(city) {
   }
 }
 
-// ✅ Route d’accueil — sert index.html personnalisé
+// ✅ Page d’accueil
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Route POST pour enregistrer un guide
+// 📥 Enregistrement d’un guide
 app.post("/guide/:id", async (req, res) => {
   const id = req.params.id;
   const content = req.body;
 
+  // 🏙️ Extraire les villes du contenu
   const cityRegex = /^(#{2,3})\s*(.+)$/gm;
   const cities = [];
   let match;
@@ -48,30 +42,41 @@ app.post("/guide/:id", async (req, res) => {
   const cityImages = {};
   for (const city of cities) {
     const img = await getImageForCity(city);
-    if (img) {
-      cityImages[city] = img;
-    }
+    if (img) cityImages[city] = img;
   }
 
-  db.set(`guides.${id}`, { content, cityImages }).write();
+  // 📤 Stocker dans Supabase
+  const { error } = await supabase
+    .from("guides")
+    .upsert([{ id, content, city_images: cityImages }]);
+
+  if (error) {
+    console.error("Erreur Supabase :", error.message);
+    return res.status(500).send("Erreur lors de l'enregistrement du guide.");
+  }
 
   res.send(`✅ Guide enregistré avec images pour l'ID ${id}`);
 });
 
-// Route GET pour afficher un guide
-app.get("/:id", (req, res) => {
+// 📄 Affichage du guide
+app.get("/:id", async (req, res) => {
   const id = req.params.id;
-  const guideData = db.get(`guides.${id}`).value();
 
-  if (!guideData) {
-    res.status(404).send("Aucun guide trouvé pour cet ID.");
-    return;
+  const { data, error } = await supabase
+    .from("guides")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  if (error || !data) {
+    return res.status(404).send("Aucun guide trouvé pour cet ID.");
   }
 
-  const { content, cityImages } = guideData;
+  const { content, city_images: cityImages } = data;
 
-  let renderedContent = content.replace(/^(#{2,3})\s*(.+)$/gm, (match, hashes, city) => {
-    const imgUrl = cityImages && cityImages[city.trim()];
+  // 🖼️ Injecter les images
+  const renderedContent = content.replace(/^(#{2,3})\s*(.+)$/gm, (match, hashes, city) => {
+    const imgUrl = cityImages?.[city.trim()];
     const heading = `${hashes} ${city}`;
     const imgTag = imgUrl
       ? `<img src="${imgUrl}" alt="Image de ${city}" style="width:100%;margin:1rem 0;border-radius:8px;" />`
@@ -170,7 +175,7 @@ ${renderedContent}
 `);
 });
 
-// Démarrage du serveur
+// 🚀 Lancement
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`✅ Serveur lancé sur le port ${port}`);
