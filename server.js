@@ -13,50 +13,18 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 🔧 Récupère une image pour une ville
+// 🔧 Fonction pour obtenir une image d'une ville
 async function getImageForCity(city) {
   try {
     const response = await axios.get("https://source.unsplash.com/800x400/?" + encodeURIComponent(city));
     return response.request.res.responseUrl;
   } catch (error) {
-    console.error("❌ Erreur image pour", city, ":", error.message);
+    console.error("Erreur récupération image pour", city, error.message);
     return null;
   }
 }
 
-// 🌍 Récupère les coordonnées via Nominatim
-async function getCoordinatesForCity(city) {
-  console.log("🔍 Recherche coordonnées pour :", city);
-  try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}`;
-    const response = await axios.get(url, {
-      headers: {
-        "User-Agent": "GuideVoyageApp/1.0 (contact@tonsite.com)",
-        "Accept-Language": "fr"
-      }
-    });
-
-    console.log("📦 Réponse Nominatim brute :", response.data);
-
-    if (response.data && response.data.length > 0) {
-      const result = response.data[0];
-      const coords = {
-        lat: parseFloat(result.lat),
-        lon: parseFloat(result.lon),
-        name: city
-      };
-      console.log("✅ Coordonnées trouvées :", coords);
-      return coords;
-    } else {
-      console.warn("⚠️ Aucune coordonnée trouvée pour :", city);
-    }
-  } catch (error) {
-    console.error("💥 Erreur Nominatim :", error.message);
-  }
-  return null;
-}
-
-// ✅ Accueil
+// ✅ Route d'accueil
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
@@ -66,34 +34,26 @@ app.post("/guide/:id", async (req, res) => {
   const id = req.params.id;
   const content = req.body;
 
-  // Extraction des villes
+  // Extraction des villes (titres niveau 2 ou 3)
   const cityRegex = /^(#{2,3})\s*(.+)$/gm;
   const cities = [];
   let match;
   while ((match = cityRegex.exec(content)) !== null) {
     cities.push(match[2].trim());
   }
-  console.log("🏙️ Villes extraites :", cities);
 
-  // Images
   const cityImages = {};
   for (const city of cities) {
     const img = await getImageForCity(city);
-    if (img) cityImages[city] = img;
+    if (img) {
+      cityImages[city] = img;
+    }
   }
-
-  // Coordonnées
-  const coordinates = [];
-  for (const city of cities) {
-    const coord = await getCoordinatesForCity(city);
-    if (coord) coordinates.push(coord);
-  }
-  console.log("📍 Coordonnées récoltées :", coordinates);
 
   // Enregistrement Supabase
   const { data, error } = await supabase
     .from("guides")
-    .upsert({ id, content, city_images: cityImages, coordinates })
+    .upsert({ id, content, city_images: cityImages })
     .select();
 
   if (error) {
@@ -101,17 +61,17 @@ app.post("/guide/:id", async (req, res) => {
     return res.status(500).send(`Erreur Supabase : ${error.message} — ${error.details || ""}`);
   }
 
-  console.log("✅ Supabase enregistrement :", data);
-  res.send(`✅ Guide enregistré avec images et coordonnées pour l'ID ${id}`);
+  console.log("✅ Supabase upsert success, data:", data);
+  res.send(`✅ Guide enregistré avec images pour l'ID ${id}`);
 });
 
-// 📄 Affichage d’un guide
+// 📄 Lecture du guide
 app.get("/:id", async (req, res) => {
   const id = req.params.id;
 
   const { data, error } = await supabase
     .from("guides")
-    .select("content, city_images, coordinates")
+    .select("content, city_images")
     .eq("id", id)
     .single();
 
@@ -119,7 +79,56 @@ app.get("/:id", async (req, res) => {
     return res.status(404).send("Aucun guide trouvé pour cet ID.");
   }
 
-  const { content, city_images: cityImages, coordinates } = data;
+  const { content, city_images: cityImages } = data;
+
+  // Extraction des coordonnées via Nominatim
+  const cityRegex = /^(#{2,3})\s*(.+)$/gm;
+  const cities = [];
+  let match;
+  while ((match = cityRegex.exec(content)) !== null) {
+    cities.push(match[2].trim());
+  }
+
+  const coordinates = [];
+  for (const city of cities) {
+    try {
+      const resp = await axios.get("https://nominatim.openstreetmap.org/search", {
+        params: { q: city, format: "json", limit: 1 },
+        headers: { "User-Agent": "guide-app" }
+      });
+      if (resp.data && resp.data[0]) {
+        coordinates.push({
+          name: city,
+          lat: parseFloat(resp.data[0].lat),
+          lon: parseFloat(resp.data[0].lon)
+        });
+      }
+    } catch (e) {
+      console.error("Erreur géocodage pour", city, e.message);
+    }
+  }
+
+  const mapScript = `
+    <div id="map" style="height: 500px; margin-top: 3rem;"></div>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+      const coordinates = ${JSON.stringify(coordinates || [])};
+      console.log("🧭 Données coordonnées pour la carte :", coordinates);
+
+      if (Array.isArray(coordinates) && coordinates.length > 0) {
+        const map = L.map('map').setView([coordinates[0].lat, coordinates[0].lon], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        coordinates.forEach(coord => {
+          L.marker([coord.lat, coord.lon]).addTo(map).bindPopup(coord.name || 'Lieu');
+        });
+      } else {
+        document.getElementById("map").innerHTML = "<p style='color:gray;'>Aucune donnée géographique disponible pour ce guide.</p>";
+      }
+    </script>
+  `;
 
   const renderedContent = content.replace(/^(#{2,3})\s*(.+)$/gm, (match, hashes, city) => {
     const imgUrl = cityImages && cityImages[city.trim()];
@@ -129,24 +138,6 @@ app.get("/:id", async (req, res) => {
       : "";
     return `${heading}\n${imgTag}`;
   });
-
-  const mapScript = `
-    <div id="map" style="height: 500px; margin-top: 3rem;"></div>
-    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-    <script>
-      const coordinates = ${JSON.stringify(coordinates)};
-      if (coordinates.length > 0) {
-        const map = L.map('map').setView([coordinates[0].lat, coordinates[0].lon], 5);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap contributors'
-        }).addTo(map);
-
-        coordinates.forEach(coord => {
-          L.marker([coord.lat, coord.lon]).addTo(map).bindPopup(coord.name);
-        });
-      }
-    </script>
-  `;
 
   res.send(`
 <!DOCTYPE html>
@@ -158,6 +149,7 @@ app.get("/:id", async (req, res) => {
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 <style>
+  *, *::before, *::after { box-sizing: border-box; }
   body {
     font-family: 'Poppins', sans-serif;
     background: #f5f9ff;
@@ -206,12 +198,7 @@ app.get("/:id", async (req, res) => {
     padding: 1rem 1.2rem;
     border-radius: 4px;
   }
-  img {
-    max-width: 100%;
-    border-radius: 8px;
-    margin: 1rem 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-  }
+  p { margin-top: 0; }
   button {
     margin-top: 2.5rem;
     background: #1a73e8;
@@ -226,6 +213,13 @@ app.get("/:id", async (req, res) => {
   }
   button:hover {
     background: #155ab6;
+    box-shadow: 0 6px 12px rgb(21 90 182 / 0.5);
+  }
+  img {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 1rem 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   }
 </style>
 </head>
@@ -235,10 +229,10 @@ ${mapScript}
 <button onclick="window.print()">Exporter en PDF</button>
 </body>
 </html>
-  `);
+`);
 });
 
-// 🚀 Démarrage
+// 🚀 Lancement du serveur
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`✅ Serveur lancé sur le port ${port}`);
