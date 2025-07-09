@@ -13,7 +13,7 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 🔧 Obtenir une image depuis Unsplash
+// 🔧 Image ville depuis Unsplash
 async function getImageForCity(city) {
   try {
     const response = await axios.get("https://source.unsplash.com/800x400/?" + encodeURIComponent(city));
@@ -24,41 +24,33 @@ async function getImageForCity(city) {
   }
 }
 
-// 🔧 Obtenir les coordonnées depuis Nominatim
+// 🌍 Coordonnées via OpenStreetMap (Nominatim)
 async function getCoordinatesForCity(city) {
   try {
-    const res = await axios.get("https://nominatim.openstreetmap.org/search", {
-      params: {
-        q: city,
-        format: "json",
-        limit: 1
-      },
-      headers: { "User-Agent": "guide-app" }
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}`;
+    const response = await axios.get(url, {
+      headers: { "User-Agent": "GuideVoyageApp/1.0" }
     });
-    if (res.data[0]) {
-      return {
-        lat: parseFloat(res.data[0].lat),
-        lon: parseFloat(res.data[0].lon),
-        name: city
-      };
+    if (response.data && response.data.length > 0) {
+      const result = response.data[0];
+      return { lat: parseFloat(result.lat), lon: parseFloat(result.lon), name: city };
     }
   } catch (error) {
-    console.error("Erreur géocodage pour", city, ":", error.message);
+    console.error("Erreur géocodage pour", city, error.message);
   }
   return null;
 }
 
-// ✅ Page d'accueil
+// ✅ Route d'accueil
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// 📝 Enregistrer un guide
+// 📝 Enregistrement guide
 app.post("/guide/:id", async (req, res) => {
   const id = req.params.id;
   const content = req.body;
 
-  // Extraction des villes
   const cityRegex = /^(#{2,3})\s*(.+)$/gm;
   const cities = [];
   let match;
@@ -66,34 +58,33 @@ app.post("/guide/:id", async (req, res) => {
     cities.push(match[2].trim());
   }
 
-  // Images et coordonnées
   const cityImages = {};
   const coordinates = [];
 
   for (const city of cities) {
-    const img = await getImageForCity(city);
+    const [img, coord] = await Promise.all([
+      getImageForCity(city),
+      getCoordinatesForCity(city)
+    ]);
     if (img) cityImages[city] = img;
-
-    const point = await getCoordinatesForCity(city);
-    if (point) coordinates.push(point);
+    if (coord) coordinates.push(coord);
   }
 
-  // Insertion Supabase
   const { data, error } = await supabase
     .from("guides")
     .upsert({ id, content, city_images: cityImages, coordinates })
     .select();
 
   if (error) {
-    console.error("❌ Supabase upsert error:", error.message, error.details, error.hint);
-    return res.status(500).send(`Erreur Supabase : ${error.message} — ${error.details || ""}`);
+    console.error("❌ Supabase upsert error:", error.message);
+    return res.status(500).send(`Erreur Supabase : ${error.message}`);
   }
 
-  console.log("✅ Supabase upsert success, data:", data);
+  console.log("✅ Guide enregistré avec images et coordonnées.");
   res.send(`✅ Guide enregistré avec images et carte pour l'ID ${id}`);
 });
 
-// 📄 Affichage du guide
+// 📄 Lecture guide
 app.get("/:id", async (req, res) => {
   const id = req.params.id;
 
@@ -107,7 +98,7 @@ app.get("/:id", async (req, res) => {
     return res.status(404).send("Aucun guide trouvé pour cet ID.");
   }
 
-  const { content, city_images: cityImages, coordinates = [] } = data;
+  const { content, city_images: cityImages, coordinates } = data;
 
   const renderedContent = content.replace(/^(#{2,3})\s*(.+)$/gm, (match, hashes, city) => {
     const imgUrl = cityImages && cityImages[city.trim()];
@@ -118,6 +109,30 @@ app.get("/:id", async (req, res) => {
     return `${heading}\n${imgTag}`;
   });
 
+  const leafletMapBlock = `
+<div id="map" style="height: 400px; margin: 2rem 0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script>
+  const map = L.map('map').setView([48.8566, 2.3522], 4);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  const coordinates = ${JSON.stringify(coordinates)};
+  coordinates.forEach(point => {
+    L.marker([point.lat, point.lon]).addTo(map)
+      .bindPopup(point.name)
+      .openPopup();
+  });
+
+  if (coordinates.length) {
+    const bounds = L.latLngBounds(coordinates.map(c => [c.lat, c.lon]));
+    map.fitBounds(bounds, { padding: [30, 30] });
+  }
+</script>
+`;
+
   res.send(`
 <!DOCTYPE html>
 <html lang="fr">
@@ -126,7 +141,6 @@ app.get("/:id", async (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Guide de voyage</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet" />
-<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   body {
@@ -200,38 +214,18 @@ app.get("/:id", async (req, res) => {
     margin: 1rem 0;
     box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   }
-  #map {
-    height: 400px;
-    margin-top: 2rem;
-    border-radius: 8px;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-  }
 </style>
 </head>
 <body>
 ${renderedContent}
-<div id="map"></div>
+${leafletMapBlock}
 <button onclick="window.print()">Exporter en PDF</button>
-<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
-<script>
-  const coordinates = ${JSON.stringify(coordinates)};
-  if (coordinates.length > 0) {
-    const map = L.map('map').setView([coordinates[0].lat, coordinates[0].lon], 5);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap',
-    }).addTo(map);
-
-    coordinates.forEach(point => {
-      L.marker([point.lat, point.lon]).addTo(map).bindPopup(point.name);
-    });
-  }
-</script>
 </body>
 </html>
 `);
 });
 
-// 🚀 Lancement du serveur
+// 🚀 Démarrage du serveur
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`✅ Serveur lancé sur le port ${port}`);
