@@ -13,78 +13,99 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 🔧 Image ville depuis Unsplash
+// 🔧 Récupère une image pour une ville
 async function getImageForCity(city) {
   try {
     const response = await axios.get("https://source.unsplash.com/800x400/?" + encodeURIComponent(city));
     return response.request.res.responseUrl;
   } catch (error) {
-    console.error("Erreur récupération image pour", city, error.message);
+    console.error("❌ Erreur image pour", city, ":", error.message);
     return null;
   }
 }
 
-// 🌍 Coordonnées via OpenStreetMap (Nominatim)
+// 🌍 Récupère les coordonnées via Nominatim
 async function getCoordinatesForCity(city) {
+  console.log("🔍 Recherche coordonnées pour :", city);
   try {
     const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(city)}`;
     const response = await axios.get(url, {
-      headers: { "User-Agent": "GuideVoyageApp/1.0" }
+      headers: {
+        "User-Agent": "GuideVoyageApp/1.0 (contact@tonsite.com)",
+        "Accept-Language": "fr"
+      }
     });
+
+    console.log("📦 Réponse Nominatim brute :", response.data);
+
     if (response.data && response.data.length > 0) {
       const result = response.data[0];
-      return { lat: parseFloat(result.lat), lon: parseFloat(result.lon), name: city };
+      const coords = {
+        lat: parseFloat(result.lat),
+        lon: parseFloat(result.lon),
+        name: city
+      };
+      console.log("✅ Coordonnées trouvées :", coords);
+      return coords;
+    } else {
+      console.warn("⚠️ Aucune coordonnée trouvée pour :", city);
     }
   } catch (error) {
-    console.error("Erreur géocodage pour", city, error.message);
+    console.error("💥 Erreur Nominatim :", error.message);
   }
   return null;
 }
 
-// ✅ Route d'accueil
+// ✅ Accueil
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// 📝 Enregistrement guide
+// 📝 Enregistrement du guide
 app.post("/guide/:id", async (req, res) => {
   const id = req.params.id;
   const content = req.body;
 
+  // Extraction des villes
   const cityRegex = /^(#{2,3})\s*(.+)$/gm;
   const cities = [];
   let match;
   while ((match = cityRegex.exec(content)) !== null) {
     cities.push(match[2].trim());
   }
+  console.log("🏙️ Villes extraites :", cities);
 
+  // Images
   const cityImages = {};
-  const coordinates = [];
-
   for (const city of cities) {
-    const [img, coord] = await Promise.all([
-      getImageForCity(city),
-      getCoordinatesForCity(city)
-    ]);
+    const img = await getImageForCity(city);
     if (img) cityImages[city] = img;
-    if (coord) coordinates.push(coord);
   }
 
+  // Coordonnées
+  const coordinates = [];
+  for (const city of cities) {
+    const coord = await getCoordinatesForCity(city);
+    if (coord) coordinates.push(coord);
+  }
+  console.log("📍 Coordonnées récoltées :", coordinates);
+
+  // Enregistrement Supabase
   const { data, error } = await supabase
     .from("guides")
     .upsert({ id, content, city_images: cityImages, coordinates })
     .select();
 
   if (error) {
-    console.error("❌ Supabase upsert error:", error.message);
-    return res.status(500).send(`Erreur Supabase : ${error.message}`);
+    console.error("❌ Supabase upsert error:", error.message, error.details, error.hint);
+    return res.status(500).send(`Erreur Supabase : ${error.message} — ${error.details || ""}`);
   }
 
-  console.log("✅ Guide enregistré avec images et coordonnées.");
-  res.send(`✅ Guide enregistré avec images et carte pour l'ID ${id}`);
+  console.log("✅ Supabase enregistrement :", data);
+  res.send(`✅ Guide enregistré avec images et coordonnées pour l'ID ${id}`);
 });
 
-// 📄 Lecture guide
+// 📄 Affichage d’un guide
 app.get("/:id", async (req, res) => {
   const id = req.params.id;
 
@@ -109,29 +130,23 @@ app.get("/:id", async (req, res) => {
     return `${heading}\n${imgTag}`;
   });
 
-  const leafletMapBlock = `
-<div id="map" style="height: 400px; margin: 2rem 0; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<script>
-  const map = L.map('map').setView([48.8566, 2.3522], 4);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap'
-  }).addTo(map);
+  const mapScript = `
+    <div id="map" style="height: 500px; margin-top: 3rem;"></div>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+      const coordinates = ${JSON.stringify(coordinates)};
+      if (coordinates.length > 0) {
+        const map = L.map('map').setView([coordinates[0].lat, coordinates[0].lon], 5);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
 
-  const coordinates = ${JSON.stringify(coordinates)};
-  coordinates.forEach(point => {
-    L.marker([point.lat, point.lon]).addTo(map)
-      .bindPopup(point.name)
-      .openPopup();
-  });
-
-  if (coordinates.length) {
-    const bounds = L.latLngBounds(coordinates.map(c => [c.lat, c.lon]));
-    map.fitBounds(bounds, { padding: [30, 30] });
-  }
-</script>
-`;
+        coordinates.forEach(coord => {
+          L.marker([coord.lat, coord.lon]).addTo(map).bindPopup(coord.name);
+        });
+      }
+    </script>
+  `;
 
   res.send(`
 <!DOCTYPE html>
@@ -141,8 +156,8 @@ app.get("/:id", async (req, res) => {
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Guide de voyage</title>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
 <style>
-  *, *::before, *::after { box-sizing: border-box; }
   body {
     font-family: 'Poppins', sans-serif;
     background: #f5f9ff;
@@ -191,7 +206,12 @@ app.get("/:id", async (req, res) => {
     padding: 1rem 1.2rem;
     border-radius: 4px;
   }
-  p { margin-top: 0; }
+  img {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 1rem 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
   button {
     margin-top: 2.5rem;
     background: #1a73e8;
@@ -206,26 +226,19 @@ app.get("/:id", async (req, res) => {
   }
   button:hover {
     background: #155ab6;
-    box-shadow: 0 6px 12px rgb(21 90 182 / 0.5);
-  }
-  img {
-    max-width: 100%;
-    border-radius: 8px;
-    margin: 1rem 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   }
 </style>
 </head>
 <body>
 ${renderedContent}
-${leafletMapBlock}
+${mapScript}
 <button onclick="window.print()">Exporter en PDF</button>
 </body>
 </html>
-`);
+  `);
 });
 
-// 🚀 Démarrage du serveur
+// 🚀 Démarrage
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`✅ Serveur lancé sur le port ${port}`);
