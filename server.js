@@ -14,11 +14,6 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 🔄 Images fictives
-async function getImageForCity(city) {
-  return `https://via.placeholder.com/800x400.png?text=${encodeURIComponent(city)}`;
-}
-
 // 🔄 Coordonnées fictives
 async function getCoordinatesForCity(city) {
   const fakeCoords = {
@@ -58,29 +53,24 @@ app.post("/guide/:id", async (req, res) => {
     }
   });
 
-  const cityImages = {};
   const coordinates = [];
 
   for (const city of cities) {
-    const img = await getImageForCity(city);
     const coords = await getCoordinatesForCity(city);
-
-    if (img) cityImages[city] = img;
     if (coords) coordinates.push(coords);
   }
 
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from("guides")
-    .upsert({ id, content, city_images: cityImages, coordinates })
-    .select();
+    .upsert({ id, content, coordinates });
 
   if (error) {
     console.error("❌ Supabase upsert error:", error.message, error.details, error.hint);
     return res.status(500).send(`Erreur Supabase : ${error.message} — ${error.details || ""}`);
   }
 
-  console.log("✅ Guide enregistré avec images et coordonnées pour l'ID", id);
-  res.send(`✅ Guide enregistré avec images et carte pour l'ID ${id}`);
+  console.log("✅ Guide enregistré avec coordonnées pour l'ID", id);
+  res.send(`✅ Guide enregistré avec carte pour l'ID ${id}`);
 });
 
 // 📄 Lecture du guide
@@ -89,7 +79,7 @@ app.get("/:id", async (req, res) => {
 
   const { data, error } = await supabase
     .from("guides")
-    .select("content, city_images, coordinates")
+    .select("content, coordinates")
     .eq("id", id)
     .single();
 
@@ -97,15 +87,7 @@ app.get("/:id", async (req, res) => {
     return res.status(404).send("Aucun guide trouvé pour cet ID.");
   }
 
-  const { content, city_images: cityImages, coordinates } = data;
-
-  const renderedContent = content.replace(/<h3[^>]*>(.*?)<\/h3>/g, (match, title) => {
-    const parts = title.split("–").map(p => p.trim());
-    const city = parts[1];
-    const imgUrl = cityImages?.[city];
-    const imgTag = imgUrl ? `<img src="${imgUrl}" alt="Image de ${city}" style="width:100%;margin:1rem 0;border-radius:8px;" />` : "";
-    return `${match}\n${imgTag}`;
-  });
+  const { content, coordinates } = data;
 
   const mapScript = coordinates && coordinates.length > 0
     ? `
@@ -164,7 +146,7 @@ app.get("/:id", async (req, res) => {
 </style>
 </head>
 <body>
-${renderedContent}
+${content}
 ${mapScript}
 <button onclick="window.print()">Exporter en PDF</button>
 </body>
