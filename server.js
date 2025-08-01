@@ -49,6 +49,28 @@ async function getCoordinatesForCity(city) {
   }
 }
 
+// 🔄 Fake pour dev local
+async function getImageForCity(city) {
+  return `https://via.placeholder.com/800x400.png?text=${encodeURIComponent(city)}`;
+}
+
+async function getCoordinatesForCity(city) {
+  const fakeCoords = {
+    "Tokyo": { lat: 35.6762, lon: 139.6503 },
+    "Nikko": { lat: 36.7487, lon: 139.5986 },
+    "Hakone": { lat: 35.1911, lon: 139.0260 },
+    "Kyoto": { lat: 35.0116, lon: 135.7681 },
+    "Hiroshima": { lat: 34.3853, lon: 132.4553 },
+    "Osaka": { lat: 34.6937, lon: 135.5023 },
+    "Nara": { lat: 34.6851, lon: 135.8048 },
+    "Kobe": { lat: 34.6901, lon: 135.1956 },
+    "Okayama": { lat: 34.6551, lon: 133.9195 },
+    "Miyajima": { lat: 34.2950, lon: 132.3198 },
+  };
+  return fakeCoords[city] ? { ...fakeCoords[city], city } : null;
+}
+
+
 // ✅ Page d'accueil
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
