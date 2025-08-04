@@ -105,16 +105,22 @@ app.get("/:id", async (req, res) => {
   const mapSection = coordinates && coordinates.length
     ? `
     <div id="map" style="height: 400px; margin: 2rem 0; border-radius: 12px;"></div>
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
     <script>
-      const coords = ${JSON.stringify(coordinates)};
-      const map = L.map('map').setView([coords[0].lat, coords[0].lon], 6);
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '© OpenStreetMap contributors'
-      }).addTo(map);
-      coords.forEach(c => {
-        L.marker([c.lat, c.lon]).addTo(map).bindPopup(c.city);
-      });
-    </script>
+    window.addEventListener("load", () => {
+    const coords = ${JSON.stringify(coordinates)};
+    if (!coords.length) return;
+
+    const map = L.map('map').setView([coords[0].lat, coords[0].lon], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    coords.forEach(c => {
+      L.marker([c.lat, c.lon]).addTo(map).bindPopup(c.city);
+    });
+  });
+</script>
     `
     : `<p>Aucune donnée géographique disponible pour ce guide.</p>`;
 
