@@ -2,8 +2,8 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const { createClient } = require("@supabase/supabase-js");
 const axios = require("axios");
-const cheerio = require("cheerio");
 const path = require("path");
+const cheerio = require("cheerio");
 
 const app = express();
 app.use(bodyParser.text({ type: "*/*" }));
@@ -14,21 +14,36 @@ const supabase = createClient(
   process.env.SUPABASE_KEY
 );
 
-// 🔄 Coordonnées fictives
+// 🌍 Fonction pour géolocaliser une ville via Nominatim
 async function getCoordinatesForCity(city) {
-  const fakeCoords = {
-    "Tokyo": { lat: 35.6762, lon: 139.6503 },
-    "Nikko": { lat: 36.7487, lon: 139.5986 },
-    "Hakone": { lat: 35.1911, lon: 139.0260 },
-    "Kyoto": { lat: 35.0116, lon: 135.7681 },
-    "Hiroshima": { lat: 34.3853, lon: 132.4553 },
-    "Osaka": { lat: 34.6937, lon: 135.5023 },
-    "Nara": { lat: 34.6851, lon: 135.8048 },
-    "Kobe": { lat: 34.6901, lon: 135.1956 },
-    "Okayama": { lat: 34.6551, lon: 133.9195 },
-    "Miyajima": { lat: 34.2950, lon: 132.3198 },
-  };
-  return fakeCoords[city] ? { ...fakeCoords[city], city } : null;
+  try {
+    const response = await axios.get("https://nominatim.openstreetmap.org/search", {
+      params: {
+        q: city,
+        format: "json",
+        limit: 1,
+      },
+      headers: {
+        "User-Agent": "guide-voyage-app"
+      }
+    });
+
+    if (response.data && response.data.length > 0) {
+      const result = response.data[0];
+      return {
+        lat: parseFloat(result.lat),
+        lon: parseFloat(result.lon),
+        city
+      };
+    } else {
+      console.warn("❗ Ville non trouvée:", city);
+      return null;
+    }
+
+  } catch (error) {
+    console.error("🌍 Erreur géoloc pour", city, error.message);
+    return null;
+  }
 }
 
 // ✅ Route d'accueil
@@ -42,35 +57,33 @@ app.post("/guide/:id", async (req, res) => {
   const content = req.body;
 
   const $ = cheerio.load(content);
-  const cities = [];
+  const cityNames = new Set();
 
   $("h3").each((_, el) => {
     const text = $(el).text();
-    const parts = text.split("–").map(p => p.trim());
-    if (parts.length > 1) {
-      const city = parts[1];
-      if (!cities.includes(city)) cities.push(city);
-    }
+    const match = text.match(/–\s*(.+)/); // ex: "Jour 1 – Tokyo"
+    if (match) cityNames.add(match[1].trim());
   });
 
   const coordinates = [];
-
-  for (const city of cities) {
+  for (const city of cityNames) {
+    await new Promise(r => setTimeout(r, 1000)); // éviter throttling
     const coords = await getCoordinatesForCity(city);
     if (coords) coordinates.push(coords);
   }
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("guides")
-    .upsert({ id, content, coordinates });
+    .upsert({ id, content, coordinates })
+    .select();
 
   if (error) {
     console.error("❌ Supabase upsert error:", error.message, error.details, error.hint);
     return res.status(500).send(`Erreur Supabase : ${error.message} — ${error.details || ""}`);
   }
 
-  console.log("✅ Guide enregistré avec coordonnées pour l'ID", id);
-  res.send(`✅ Guide enregistré avec carte pour l'ID ${id}`);
+  console.log("✅ Guide enregistré avec coordonnées :", coordinates);
+  res.send(`✅ Guide enregistré avec géolocalisation pour l'ID ${id}`);
 });
 
 // 📄 Lecture du guide
@@ -89,66 +102,105 @@ app.get("/:id", async (req, res) => {
 
   const { content, coordinates } = data;
 
-  const mapScript = coordinates && coordinates.length > 0
+  const mapSection = coordinates && coordinates.length
     ? `
-    <div id="map" style="height: 500px; margin-top: 2rem; border-radius: 8px;"></div>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <div id="map" style="height: 400px; margin: 2rem 0; border-radius: 12px;"></div>
     <script>
-      const coordinates = ${JSON.stringify(coordinates)};
-      if (coordinates.length > 0) {
-        const map = L.map('map').setView([coordinates[0].lat, coordinates[0].lon], 6);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap'
-        }).addTo(map);
-        coordinates.forEach(({ lat, lon, city }) => {
-          L.marker([lat, lon]).addTo(map).bindPopup(city);
-        });
-      }
+      const coords = ${JSON.stringify(coordinates)};
+      const map = L.map('map').setView([coords[0].lat, coords[0].lon], 6);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors'
+      }).addTo(map);
+      coords.forEach(c => {
+        L.marker([c.lat, c.lon]).addTo(map).bindPopup(c.city);
+      });
     </script>
-  `
+    `
     : `<p>Aucune donnée géographique disponible pour ce guide.</p>`;
 
   res.send(`
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Guide de voyage</title>
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet" />
-<style>
-  body {
-    font-family: 'Poppins', sans-serif;
-    background: #f5f9ff;
-    color: #222;
-    max-width: 900px;
-    margin: auto;
-    padding: 2rem 1rem;
-    line-height: 1.6;
-  }
-  h2, h3, h4 { color: #1a73e8; }
-  h2 { border-bottom: 3px solid #1a73e8; padding-bottom: 0.3rem; }
-  h3 { border-left: 5px solid #1a73e8; padding-left: 0.5rem; background: #e8f0fe; border-radius: 4px; }
-  h4 { color: #0f59d7; margin-top: 1.2rem; }
-  img { max-width: 100%; border-radius: 8px; margin: 1rem 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-  #map { height: 500px; margin-top: 2rem; }
-  button {
-    margin-top: 2.5rem;
-    background: #1a73e8;
-    color: white;
-    border: none;
-    border-radius: 6px;
-    padding: 0.8rem 2rem;
-    font-size: 1.1rem;
-    cursor: pointer;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Guide de voyage</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: 'Poppins', sans-serif;
+      background: #f5f9ff;
+      color: #222;
+      margin: 0;
+      padding: 2rem 1rem;
+      max-width: 900px;
+      margin-left: auto;
+      margin-right: auto;
+      line-height: 1.6;
+    }
+    h2, h3, h4 {
+      color: #1a73e8;
+      margin-top: 2rem;
+      margin-bottom: 0.6rem;
+    }
+    h2 {
+      border-bottom: 3px solid #1a73e8;
+      padding-bottom: 0.3rem;
+    }
+    h3 {
+      font-weight: 600;
+      border-left: 5px solid #1a73e8;
+      padding-left: 0.5rem;
+      background: #e8f0fe;
+      border-radius: 4px;
+    }
+    h4 {
+      margin-top: 1.2rem;
+      font-weight: 600;
+      color: #0f59d7;
+    }
+    ul {
+      padding-left: 1.4rem;
+      margin-top: 0.4rem;
+      margin-bottom: 1rem;
+    }
+    li {
+      margin-bottom: 0.5rem;
+    }
+    blockquote {
+      font-style: italic;
+      background: #e3f2fd;
+      border-left: 5px solid #1a73e8;
+      margin: 2rem 0;
+      padding: 1rem 1.2rem;
+      border-radius: 4px;
+    }
+    p { margin-top: 0; }
+    button {
+      margin-top: 2.5rem;
+      background: #1a73e8;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 0.8rem 2rem;
+      font-size: 1.1rem;
+      cursor: pointer;
+      transition: background-color 0.3s ease;
+      box-shadow: 0 4px 8px rgb(26 115 232 / 0.3);
+    }
+    button:hover {
+      background: #155ab6;
+      box-shadow: 0 6px 12px rgb(21 90 182 / 0.5);
+    }
+  </style>
 </head>
 <body>
 ${content}
-${mapScript}
+${mapSection}
 <button onclick="window.print()">Exporter en PDF</button>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
 </body>
 </html>
 `);
