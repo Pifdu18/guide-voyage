@@ -225,7 +225,7 @@ ${coordinates && coordinates.length ? `
       coords.forEach((c, index) => {
         L.marker([c.lat, c.lon])
           .addTo(map)
-          .bindPopup(`<strong>Étape ${index + 1}</strong><br />${c.city}`);
+          .bindPopup("<strong>Étape " + (index + 1) + "</strong><br />" + c.city);
 
         L.circleMarker([c.lat, c.lon], {
           radius: 12,
