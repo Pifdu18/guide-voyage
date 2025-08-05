@@ -57,7 +57,7 @@ app.post("/guide/:id", async (req, res) => {
 
   $("h3").each((_, el) => {
     const text = $(el).text();
-    const match = text.match(/–\s*(.+)$/); // extrait "Tokyo" de "Jour 1 – Tokyo"
+    const match = text.match(/\u2013\s*(.+)$/); // extrait "Tokyo" de "Jour 1 – Tokyo"
     if (match) cities.push(match[1].trim());
   });
 
@@ -186,6 +186,19 @@ app.get("/:id", async (req, res) => {
       margin: 2rem 0;
       border-radius: 12px;
     }
+    .map-number {
+      background-color: #1a73e8;
+      color: white;
+      font-weight: bold;
+      border-radius: 50%;
+      text-align: center;
+      width: 24px;
+      height: 24px;
+      line-height: 24px;
+      font-size: 14px;
+      border: 2px solid white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
   </style>
 </head>
 <body>
@@ -207,9 +220,31 @@ ${coordinates && coordinates.length ? `
         maxZoom: 19
       }).addTo(map);
 
-      coords.forEach(c => {
-        L.marker([c.lat, c.lon]).addTo(map).bindPopup(\`Ville : \${c.city}\`);
+      const latlngs = [];
+
+      coords.forEach((c, index) => {
+        L.marker([c.lat, c.lon])
+          .addTo(map)
+          .bindPopup(`<strong>Étape ${index + 1}</strong><br />${c.city}`);
+
+        L.circleMarker([c.lat, c.lon], {
+          radius: 12,
+          fillColor: "#1a73e8",
+          fillOpacity: 0.8,
+          color: "#fff",
+          weight: 2
+        }).addTo(map)
+          .bindTooltip(`${index + 1}`, { permanent: true, direction: "center", className: "map-number" });
+
+        latlngs.push([c.lat, c.lon]);
       });
+
+      L.polyline(latlngs, {
+        color: "#1a73e8",
+        weight: 4,
+        opacity: 0.7,
+        lineJoin: "round"
+      }).addTo(map);
     });
   </script>
 ` : `<p><em>Aucune donnée géographique disponible pour ce guide.</em></p>`}
